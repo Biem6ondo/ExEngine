@@ -54,11 +54,11 @@ function Picker:Open(callback)
     self.OnChoose = callback
     self.Selected = nil
 
-    local player = game:GetService("Players").LocalPlayer
     local gui = Instance.new("ScreenGui")
     gui.Name = "ImagePickerGui"
     gui.ResetOnSpawn = false
-    gui.Parent = player.PlayerGui
+    gui.Parent = game.CoreGui
+gui.DisplayOrder = 2
 
     local main = Instance.new("Frame", gui)
     main.Size = UDim2.fromScale(0.7, 0.7)
