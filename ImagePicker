@@ -1,0 +1,266 @@
+_G.ImagePicker = {}
+local Picker = _G.ImagePicker
+
+Picker.RootFolder = ""
+Picker.Selected = nil
+Picker.OnChoose = nil
+
+local BATCH_SIZE = 5
+local SCAN_CHUNK = 200
+
+local function isImage(path)
+    local ext = path:lower():match("%.([%w]+)$")
+    return ext and (ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp")
+end
+
+local function scanFolderAsync(startFolder, onFile, onDone)
+    task.spawn(function()
+        local stack = { startFolder }
+        while #stack > 0 do
+            local folder = table.remove(stack)
+            if isfolder(folder) then
+                local files = listfiles(folder)
+                local counter = 0
+                for _, f in ipairs(files) do
+                    if isfolder(f) then
+                        table.insert(stack, f)
+                    else
+                        if isImage(f) then
+                            onFile(f)
+                        end
+                    end
+                    counter += 1
+                    if counter >= SCAN_CHUNK then
+                        counter = 0
+                        task.wait()
+                    end
+                end
+            end
+        end
+        onDone()
+    end)
+end
+
+local function formatPath(file)
+    local path = file:gsub("\\", "/")
+    if Picker.RootFolder and Picker.RootFolder ~= "" then
+        local root = Picker.RootFolder:gsub("\\", "/")
+        path = path:gsub("^" .. root .. "/?", "")
+    end
+    return path
+end
+
+function Picker:Open(callback)
+    self.OnChoose = callback
+    self.Selected = nil
+
+    local player = game:GetService("Players").LocalPlayer
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ImagePickerGui"
+    gui.ResetOnSpawn = false
+    gui.Parent = player.PlayerGui
+
+    local main = Instance.new("Frame", gui)
+    main.Size = UDim2.fromScale(0.7, 0.7)
+    main.Position = UDim2.fromScale(0.15, 0.15)
+    main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    main.BorderSizePixel = 0
+
+local k = Instance.new("Frame", main)
+    k.Size = UDim2.new(0.95, 5, 1.05, -96)
+    k.Position = UDim2.new(0.5, 0, 0, 48)
+k.AnchorPoint = Vector2.new(0.5, 0)
+    k.BackgroundTransparency = 1
+k.ClipsDescendants = true
+
+local pos = nil
+local f = Instance.new("Frame", k)
+f.Size = UDim2.fromOffset(120, 120)
+f.Position = UDim2.fromOffset(0, -10000)
+f.Transparency = 1
+f.ZIndex = 2
+
+    local corner = Instance.new("UICorner", main)
+    corner.CornerRadius = UDim.new(0, 12)
+
+    local select = Instance.new("UIStroke", f)
+    select.Thickness = 3
+    select.Color = Color3.new(0, 0, 1)
+
+    local header = Instance.new("Frame", main)
+    header.Size = UDim2.new(1, 0, 0, 48)
+    header.BackgroundTransparency = 1
+
+    local title = Instance.new("TextLabel", header)
+    title.Position = UDim2.fromScale(0.02, 0.12)
+    title.Size = UDim2.fromScale(0.5, 0.76)
+    title.Text = "Choose an image"
+    title.TextSize = 22
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(230, 230, 230)
+
+    local selectedLabel = Instance.new("TextLabel", header)
+    selectedLabel.Position = UDim2.fromScale(0.52, 0.12)
+    selectedLabel.Size = UDim2.fromScale(0.46, 0.76)
+    selectedLabel.Text = ""
+    selectedLabel.TextSize = 14
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Right
+    selectedLabel.BackgroundTransparency = 1
+    selectedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+
+    local scroll = Instance.new("ScrollingFrame", main)
+    scroll.Size = UDim2.new(0.95, 0, 1, -96)
+    scroll.Position = UDim2.new(0.5, 0, 0, 48)
+scroll.AnchorPoint = Vector2.new(0.5, 0)
+    scroll.BackgroundTransparency = 1
+    scroll.ScrollBarThickness = 8
+scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    scroll.CanvasSize = UDim2.fromOffset(0, 0)
+
+local conn
+
+conn = game["Run Service"].RenderStepped:Connect(function()
+if pos ~= nil then
+f.Position = UDim2.fromOffset(pos.AbsolutePosition.X - k.AbsolutePosition.X, pos.AbsolutePosition.Y - k.AbsolutePosition.Y)
+end
+end)
+
+    local layout = Instance.new("UIGridLayout", scroll)
+    layout.CellSize = UDim2.fromOffset(120, 120)
+    layout.CellPadding = UDim2.fromOffset(8, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local bottom = Instance.new("Frame", main)
+    bottom.AnchorPoint = Vector2.new(0, 1)
+    bottom.Size = UDim2.fromScale(1, 0.12)
+    bottom.Position = UDim2.fromScale(0, 1)
+    bottom.BackgroundTransparency = 1
+
+    local choose = Instance.new("TextButton", bottom)
+    choose.Text = "Choose"
+    choose.Size = UDim2.fromScale(0.2, 0.8)
+    choose.Position = UDim2.fromScale(0.55, 0.1)
+    choose.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    choose.TextColor3 = Color3.new(1, 1, 1)
+
+    local cancel = Instance.new("TextButton", bottom)
+    cancel.Text = "Cancel"
+    cancel.Size = UDim2.fromScale(0.2, 0.8)
+    cancel.Position = UDim2.fromScale(0.25, 0.1)
+    cancel.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    cancel.TextColor3 = Color3.new(1, 1, 1)
+
+    local images = {}
+    local created = 0
+    local loadingMore = false
+    local finishedScanning = false
+    local selectedFrame
+
+    local function createThumb(file)
+        local frame = Instance.new("Frame", scroll)
+        frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        frame.Size = UDim2.fromOffset(120, 120)
+        frame.LayoutOrder = created + 1
+        frame.BorderSizePixel = 0
+
+        local c = Instance.new("UICorner", frame)
+        c.CornerRadius = UDim.new(0, 8)
+
+        local outline = Instance.new("Frame", frame)
+        outline.Name = "Outline"
+        outline.Size = UDim2.fromScale(1, 1)
+        outline.BackgroundTransparency = 1
+        outline.BorderSizePixel = 2
+        outline.BorderColor3 = Color3.fromRGB(0, 120, 255)
+        outline.Visible = false
+
+        local img = Instance.new("ImageLabel", frame)
+        img.Size = UDim2.fromScale(1, 1)
+        img.BackgroundTransparency = 1
+        img.ScaleType = Enum.ScaleType.Crop
+
+        local btn = Instance.new("TextButton", frame)
+        btn.Text = ""
+        btn.Size = UDim2.fromScale(1, 1)
+        btn.BackgroundTransparency = 1
+
+        btn.MouseButton1Click:Connect(function()
+pos = frame
+            Picker.Selected = file
+            if selectedFrame then
+                local old = selectedFrame:FindFirstChild("Outline")
+                if old then old.Visible = false end
+            end
+            outline.Visible = true
+            selectedFrame = frame
+            selectedLabel.Text = formatPath(file)
+        end)
+
+        created += 1
+        return frame, img
+    end
+
+    local function renderNextBatch()
+        if loadingMore then return end
+        loadingMore = true
+
+        local start = created + 1
+        local finish = math.min(#images, start + BATCH_SIZE - 1)
+
+        for i = start, finish do
+            local file = images[i]
+            local frame, img = createThumb(file)
+            img.Image = getcustomasset(file)
+        end
+
+        scroll.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 12)
+        loadingMore = false
+    end
+
+    local function tryLoadMore()
+        if created < #images and not loadingMore then
+            renderNextBatch()
+        end
+        if not finishedScanning and (scroll.CanvasPosition.Y + scroll.AbsoluteWindowSize.Y) >= (scroll.CanvasSize.Y.Offset - 200) then
+            if not loadingMore then
+                renderNextBatch()
+            end
+        end
+    end
+
+    scroll.Changed:Connect(function(prop)
+        if prop == "CanvasPosition" then
+            tryLoadMore()
+        end
+    end)
+
+    task.spawn(function()
+        local start = self.RootFolder ~= "" and self.RootFolder or ""
+        scanFolderAsync(start, function(file)
+            table.insert(images, file)
+            if #images - created >= BATCH_SIZE then
+                renderNextBatch()
+            end
+        end, function()
+            finishedScanning = true
+            renderNextBatch()
+        end)
+    end)
+
+    renderNextBatch()
+
+    choose.MouseButton1Click:Connect(function()
+        if Picker.OnChoose then
+            local out = Picker.Selected and formatPath(Picker.Selected) or nil
+            Picker.OnChoose(out)
+        end
+        gui:Destroy()
+conn:Disconnect()
+    end)
+
+    cancel.MouseButton1Click:Connect(function()
+        gui:Destroy()
+conn:Disconnect()
+    end)
+end
